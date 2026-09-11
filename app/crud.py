@@ -62,6 +62,50 @@ async def create_loan(db: AsyncSession, payload: schemas.LoanCreate) -> models.L
     return await get_loan(db, loan.id)
 
 
+async def update_loan(db: AsyncSession, loan: models.Loan, payload: schemas.LoanCreate) -> models.Loan:
+    """Replace a loan's core terms and regenerate its schedule from scratch.
+
+    Any previously applied extraordinary amortizations no longer apply to
+    the new terms, so they're cleared along with the old installments.
+    """
+    start = payload.start_date or date.today()
+    rows = generate_schedule(
+        principal=payload.principal,
+        annual_rate=payload.annual_rate,
+        frequency=payload.frequency,
+        num_installments=payload.num_installments,
+        start_date=start,
+    )
+
+    await db.execute(delete(models.Installment).where(models.Installment.loan_id == loan.id))
+    await db.execute(delete(models.Amortization).where(models.Amortization.loan_id == loan.id))
+
+    loan.name = payload.name
+    loan.principal = payload.principal
+    loan.annual_rate = payload.annual_rate
+    loan.rate_type = payload.rate_type
+    loan.frequency = payload.frequency
+    loan.num_installments = payload.num_installments
+    loan.start_date = start
+
+    for row in rows:
+        db.add(
+            models.Installment(
+                loan_id=loan.id,
+                number=row.number,
+                due_date=row.due_date,
+                initial_balance=row.initial_balance,
+                interest_amount=row.interest_amount,
+                amortization_amount=row.amortization_amount,
+                payment_amount=row.payment_amount,
+                final_balance=row.final_balance,
+            )
+        )
+
+    await db.commit()
+    return await get_loan(db, loan.id)
+
+
 async def list_loans(db: AsyncSession) -> list[models.Loan]:
     result = await db.execute(select(models.Loan).order_by(models.Loan.created_at.desc()))
     return list(result.scalars().all())

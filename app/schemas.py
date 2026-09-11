@@ -17,6 +17,11 @@ class LoanCreate(BaseModel):
     start_date: date | None = Field(default=None, description="Fecha del primer pago; hoy si se omite")
 
 
+class LoanUpdate(LoanCreate):
+    """Same shape as LoanCreate; updating replaces the loan's terms and
+    regenerates its schedule from scratch (see crud.update_loan)."""
+
+
 class InstallmentOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

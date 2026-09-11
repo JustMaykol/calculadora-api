@@ -45,6 +45,13 @@ async def get_loan(loan_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     return _to_detail(loan)
 
 
+@router.put("/{loan_id}", response_model=schemas.LoanDetail)
+async def update_loan(loan_id: uuid.UUID, payload: schemas.LoanUpdate, db: AsyncSession = Depends(get_db)):
+    loan = await _get_loan_or_404(loan_id, db)
+    loan = await crud.update_loan(db, loan, payload)
+    return _to_detail(loan)
+
+
 @router.delete("/{loan_id}", status_code=204)
 async def delete_loan(loan_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     loan = await _get_loan_or_404(loan_id, db)
