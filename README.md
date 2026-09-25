@@ -1,13 +1,59 @@
-# Calculadora de Intereses — API (calculadora-api)
+# calculadora-api
 
-API en **FastAPI** + **SQLAlchemy (async)** sobre **Postgres (Neon)**. Calcula cronogramas de pago por el sistema francés (cuota fija) a partir de monto, TEA/TCEA, frecuencia y número de cuotas, y permite aplicar amortizaciones extraordinarias (abonos a capital) que reducen el plazo restante.
+API de una **calculadora de préstamos** con el **sistema francés** (cuota fija). Genera el cronograma de pagos a partir del monto, la tasa (TEA o TCEA), la frecuencia y el número de cuotas, y recalcula el cronograma cuando se hace una **amortización extraordinaria** (abono a capital).
 
-Repo hermano del frontend: [calculadora-web](https://github.com/JustMaykol/calculadora-web).
+Frontend: [calculadora-web](https://github.com/JustMaykol/calculadora-web) · 🌐 https://calculadora-web-orcin.vercel.app
 
-## Requisitos
+## Stack
 
-- Python 3.12+
-- Una base de datos Postgres (recomendado: [Neon](https://neon.tech), tiene plan gratuito)
+- Python 3.12 · FastAPI · Pydantic
+- SQLAlchemy 2.0 (async) + asyncpg · Alembic
+- PostgreSQL en [Neon](https://neon.tech)
+- Despliegue en Render
+
+## Modelo financiero
+
+| Concepto | Fórmula |
+|---|---|
+| Tasa periódica | `i = (1 + TEA)^(1/m) − 1`, con `m` periodos por año |
+| Cuota fija | `cuota = P · i / (1 − (1 + i)^−n)` |
+| Plazo tras un abono | `n' = −ln(1 − saldo · i / cuota) / ln(1 + i)` |
+
+- **Frecuencias**: mensual (12), quincenal (24), bimestral (6), trimestral (4), cuatrimestral (3), semestral (2) y anual (1).
+- **Amortización extraordinaria**: la cuota se mantiene y el **plazo se reduce** (estrategia "reducir plazo").
+- **Redondeo**: montos a 2 decimales; la última cuota absorbe la diferencia para que el saldo termine exactamente en cero.
+
+### Ejemplo
+
+Préstamo de **10 000** al **12 % TEA**, **12 cuotas mensuales**:
+
+- Tasa mensual: 0.9489 %
+- Cuota fija: **885.62**
+- Interés total: 627.44
+
+Con un abono extra de **3 000** después de la cuota 3, el plazo restante baja de 9 a **6 cuotas** y el interés restante de 365.36 a **140.82**.
+
+La implementación está en [`app/amortization.py`](app/amortization.py).
+
+## Endpoints
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| `POST` | `/loans` | Crea un préstamo y genera su cronograma |
+| `GET` | `/loans` | Lista los préstamos |
+| `GET` | `/loans/{id}` | Detalle con cronograma y amortizaciones |
+| `PUT` | `/loans/{id}` | Edita las condiciones y regenera el cronograma (descarta las amortizaciones previas) |
+| `DELETE` | `/loans/{id}` | Elimina un préstamo |
+| `POST` | `/loans/{id}/amortizations` | Aplica un abono a capital después de una cuota y recalcula el resto |
+
+Documentación interactiva en `/docs`.
+
+## Configuración
+
+| Variable | Descripción |
+|---|---|
+| `DATABASE_URL` | Cadena de conexión de Neon tal cual la entrega su panel. La app la adapta para asyncpg (`app/db_url.py`) y Alembic para psycopg2 |
+| `CORS_ORIGINS` | Orígenes permitidos, separados por coma (por defecto `http://localhost:4321`) |
 
 ## Desarrollo local
 
@@ -16,38 +62,31 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-cp .env.example .env
-# Edita .env con tu DATABASE_URL de Neon
+cp .env.example .env   # configura DATABASE_URL
 
 alembic upgrade head
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload   # http://localhost:8000
 ```
-
-La API queda en `http://localhost:8000`. Documentación interactiva en `http://localhost:8000/docs`.
-
-## Modelo financiero
-
-- **Tasa periódica**: la TEA/TCEA (anual efectiva) se convierte a tasa efectiva por periodo según la frecuencia: `i = (1 + TEA)^(1/m) - 1`, donde `m` es el número de periodos por año (12 mensual, 24 quincenal, 6 bimestral, 4 trimestral, 3 cuatrimestral, 2 semestral, 1 anual).
-- **Cuota fija (sistema francés)**: `cuota = P * i / (1 - (1+i)^-n)`.
-- **Amortización extraordinaria**: al abonar un extra a capital después de una cuota específica, la cuota fija **se mantiene igual** y el plazo restante se recalcula y se acorta (estrategia "reducir plazo"). La última cuota del nuevo cronograma absorbe cualquier diferencia de redondeo para que el saldo llegue exactamente a cero.
-
-Ver `app/amortization.py` para la implementación.
-
-## Endpoints principales
-
-| Método | Ruta | Descripción |
-|---|---|---|
-| POST | `/loans` | Crea un préstamo y genera su cronograma completo |
-| GET | `/loans` | Lista los préstamos guardados |
-| GET | `/loans/{id}` | Detalle de un préstamo con su cronograma y amortizaciones |
-| POST | `/loans/{id}/amortizations` | Aplica un abono extra a capital tras una cuota y recalcula el resto |
-| DELETE | `/loans/{id}` | Elimina un préstamo |
 
 ## Despliegue en Render
 
-Este repo incluye `render.yaml` (Blueprint). Al crear el servicio en Render:
+El repo incluye un Blueprint (`render.yaml`):
 
-1. Conecta el repositorio y selecciona la carpeta `backend/` como raíz del servicio.
-2. Configura la variable de entorno `DATABASE_URL` con la cadena de conexión de Neon (usa el driver `postgresql+asyncpg://...`).
-3. Configura `CORS_ORIGINS` con la URL de tu frontend en Vercel.
-4. El build ejecuta `alembic upgrade head` automáticamente antes de levantar el servicio.
+1. Crea el servicio en Render desde este repositorio.
+2. Configura `DATABASE_URL` y `CORS_ORIGINS` (con la URL del frontend en Vercel).
+3. El build ejecuta `alembic upgrade head` antes de levantar la API.
+
+## Estructura
+
+```
+app/
+├── main.py            # FastAPI + CORS
+├── amortization.py    # motor financiero (sistema francés)
+├── crud.py            # préstamos, cronogramas y amortizaciones
+├── routers/loans.py   # endpoints
+├── models.py          # Loan, Installment, Amortization
+├── schemas.py
+├── database.py        # engine async
+└── db_url.py          # adapta la URL de Neon a cada driver
+alembic/               # migraciones
+```
